@@ -1,13 +1,13 @@
 # Blackjack over TCP
 
-Multiplayer Blackjack where players on **different machines, operating systems and languages** sit at the same table. One server deals; every client speaks the same line-based TCP protocol.
+Multiplayer Blackjack over raw TCP: **one single-threaded Python server** (`select()` multiplexing) hosts players from **C on Linux, Java on Windows and Kotlin on Android**, all speaking one hand-written, line-based protocol.
 
 ![Table](docs/table.png)
 
 | Program | Language | Runs on | Networking |
 |---|---|---|---|
 | Server (dealer) | Python 3 | Windows | `select.select()` multiplexing, raw sockets |
-| Console client | C | Linux (WSL Ubuntu) | POSIX sockets, `select()` on stdin + socket |
+| Console client | C | Linux (WSL Ubuntu) | POSIX sockets, `fork()`: one process reads the server, one reads the keyboard |
 | GUI client | Java (Swing) | Windows | `java.net.Socket`, reader thread |
 | Mobile client | Kotlin (Jetpack Compose) | Android 17 | `java.net.Socket`, reader thread + sender executor |
 
@@ -26,6 +26,16 @@ flowchart LR
 - **Authoritative server, thin clients.** The deck, hands, bets, bankrolls, turn order and timers live only on the server. Clients send intents (`BET 500`, `HIT`) and draw what the server tells them, so a modified client cannot cheat.
 - **One process, no threads on the server.** A single `select()` loop serves every client. Its timeout drives the turn timers and the pause between rounds, so the server never blocks on a slow player.
 - **TCP is a stream, not messages.** Every receiver keeps a buffer and splits it on `\n`, because one `recv()` can hold half a message or several.
+
+## Three ways to handle concurrent I/O
+
+The project uses all three classic models, one per component:
+
+| Model | Where | How |
+|---|---|---|
+| **I/O multiplexing** | Server | One thread, one `select()` loop over every socket; its timeout drives the turn timers. No locks needed, because only one thing happens at a time. |
+| **Processes** | C client | `fork()` after `connect()`: the child blocks on `recv()`, the parent blocks on the keyboard; both share the socket. |
+| **Threads** | Java & Android clients | A background reader thread loops on `readLine()` and hands each line to the UI thread (`invokeLater` / `Handler`). Android also sends from a separate thread, because it forbids network calls on the UI thread. |
 
 ## Game rules
 
@@ -86,4 +96,4 @@ java clients/java/BlackjackClient.java
 
 ## Credits
 
-The server's networking structure follows the Python `select` multiplexed chat server example by Lect. Dr. Radu Dragoș; the C client follows the `select` client example from Prof. Adrian Sergiu Darabant's Computer Networks lectures (Babeș-Bolyai University).
+The networking follows the examples of Lect. Dr. Radu Dragoș (Babeș-Bolyai University): the server is built on his Python `select` multiplexed chat server, and the C client on the `fork()` structure of his chat client.
