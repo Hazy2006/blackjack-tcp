@@ -2,12 +2,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/select.h>
+#include <signal.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
 int s;
+pid_t child;      /* the process that reads from the server */
 char buf[4096];   /* bytes received from the server, not yet split into lines */
 int buflen = 0;
 int bankroll = 0; /* last bankroll the server told us */
@@ -65,6 +67,8 @@ void handle_user_line(char *line) {
     } else if (strcmp(cmd, "spectate") == 0) {
         send_line("SPECTATE");
     } else if (strcmp(cmd, "quit") == 0 || strcmp(cmd, "q") == 0) {
+        kill(child, SIGTERM);
+        waitpid(child, NULL, 0);   /* collect it, so it doesn't stay a zombie */
         close(s);
         exit(0);
     } else if (cmd[0] != 0) {
@@ -92,25 +96,25 @@ int main(int argc, char *argv[]) {
     snprintf(out, sizeof(out), "NAME %s", argv[3]);
     send_line(out);
 
-    while (1) {
-        fd_set ins;
-        FD_ZERO(&ins);
-        FD_SET(0, &ins);   /* stdin */
-        FD_SET(s, &ins);   /* server socket */
-        if (select(s + 1, &ins, NULL, NULL, NULL) < 0) {
-            perror("select");
-            break;
-        }
+    /* Like the teacher's chat client: two processes share the socket.
+       The child only reads from the server, the parent only reads the keyboard. */
+    child = fork();
+    if (child < 0) {
+        perror("fork");
+        return 1;
+    }
 
-        if (FD_ISSET(s, &ins)) {
+    if (child == 0) {
+        while (1) {
             int r = recv(s, buf + buflen, sizeof(buf) - buflen - 1, 0);
             if (r <= 0) {
                 printf("Server closed the connection.\n");
-                break;
+                kill(getppid(), SIGTERM);   /* the parent is blocked in fgets, stop it too */
+                exit(0);
             }
             buflen += r;
             char *nl;
-            while ((nl = memchr(buf, '\n', buflen)) != NULL) {
+            while ((nl = memchr(buf, '\n', buflen)) != NULL) {   /* TCP is a stream: split on \n */
                 *nl = 0;
                 if (nl > buf && nl[-1] == '\r') nl[-1] = 0;
                 handle_server_line(buf);
@@ -119,13 +123,12 @@ int main(int argc, char *argv[]) {
                 buflen -= used;
             }
         }
-
-        if (FD_ISSET(0, &ins)) {
-            char line[128];
-            if (fgets(line, sizeof(line), stdin) == NULL) break;
-            handle_user_line(line);
-        }
     }
+
+    char line[128];
+    while (fgets(line, sizeof(line), stdin) != NULL) handle_user_line(line);
+    kill(child, SIGTERM);   /* keyboard closed (Ctrl+D): stop the reader too */
+    waitpid(child, NULL, 0);
     close(s);
     return 0;
 }
