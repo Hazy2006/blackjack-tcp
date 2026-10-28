@@ -1,6 +1,6 @@
 # Blackjack over TCP
 
-Multiplayer Blackjack over raw TCP: **one single-threaded Python server** (`select()` multiplexing) hosts players from **C on Linux, Java on Windows and Kotlin on Android**, all speaking one hand-written, line-based protocol.
+Multiplayer Blackjack over raw TCP: **one single-threaded Python server** (`select()` multiplexing) hosts players from **C on Linux, Java on Windows and Kotlin on Android**.
 
 ![Table](docs/table.png)
 
