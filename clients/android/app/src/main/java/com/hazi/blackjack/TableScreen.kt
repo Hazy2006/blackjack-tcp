@@ -208,8 +208,6 @@ private fun GameOver(text: String, onExit: () -> Unit) {
     }
 }
 
-// ---------- drawing the table ----------
-
 private fun DrawScope.drawTable(game: GameState, now: Long) {
     val s = min(size.width / VW, size.height / VH)
     val ox = (size.width - VW * s) / 2

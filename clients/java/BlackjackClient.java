@@ -13,8 +13,6 @@ import java.util.function.Consumer;
 
 public class BlackjackClient {
 
-    // ============================== NETWORKING ==============================
-
     private volatile Socket socket;   // set by the reader thread, read by the Swing thread
     private volatile Writer out;
     private JFrame frame;
@@ -69,8 +67,6 @@ public class BlackjackClient {
         }
     }
 
-    // ============================== WINDOW ==============================
-
     void showWindow() {
         frame = new JFrame("Blackjack");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -98,8 +94,6 @@ public class BlackjackClient {
         table.me = name;
         screens.show(root, "table");
     }
-
-    // ============================== CONNECT SCREEN ==============================
 
     static class ConnectPanel extends JPanel {
         final JTextField ip = new JTextField("127.0.0.1", 14);
@@ -191,8 +185,6 @@ public class BlackjackClient {
             connect.setEnabled(true);
         }
     }
-
-    // ============================== TABLE SCREEN ==============================
 
     static class Seat {
         String name;
@@ -288,8 +280,6 @@ public class BlackjackClient {
                 }
             }
         }
-
-        // ---------- protocol: one server line in, state updated ----------
 
         void handle(String line) {
             incoming.addLast(new String[]{line, String.valueOf(System.currentTimeMillis())});
@@ -461,8 +451,6 @@ public class BlackjackClient {
             for (Seat s : seats) if (s.name.equals(me)) return s;
             return null;
         }
-
-        // ---------- drawing ----------
 
         @Override
         protected void paintComponent(Graphics g0) {
@@ -756,8 +744,6 @@ public class BlackjackClient {
             centerText(g, overlay, CX, 360);
             button(g, "EXIT", CX - 80, 420, 160, 58, new Color(200, 50, 50), true, () -> System.exit(0));
         }
-
-        // ---------- small drawing helpers ----------
 
         void button(Graphics2D g, String label, int x, int y, int w, int h, Color color, boolean enabled, Runnable action) {
             Rectangle r = new Rectangle(x, y, w, h);

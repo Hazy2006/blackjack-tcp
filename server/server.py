@@ -4,10 +4,12 @@ PORT = 5050
 START_BANKROLL = 3000
 MIN_BET = 100
 GOAL = 20000
-TURN_TIME = 20   # seconds each player has to bet or to decide hit/stand
-RESULT_PAUSE = 5 # seconds to show the results before the next round
-MAX_PLAYERS = 5  # the GUI has 5 seats
-SEND_TIMEOUT = 2 # seconds sendall() may block on a client that stopped reading
+MAX_PLAYERS = 5   # the GUI has 5 seats
+
+# all times in seconds
+TURN_TIME = 20
+RESULT_PAUSE = 5
+SEND_TIMEOUT = 2
 
 RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
 SUITS = ["S", "H", "D", "C"]
@@ -18,16 +20,35 @@ s.setblocking(0)
 s.bind(('0.0.0.0', PORT))
 s.listen(5)
 
+# Each client socket has a buffer (TCP is a stream, so a recv() can end mid-line)
+# and a player: {"name", "bankroll", "bet", "hand", "status": "active" or "spectator"}.
 ins = [s]
-buffers = {}   # socket -> bytes received but not yet split into lines
-players = {}   # socket -> {"name", "bankroll", "bet", "hand", "status"}; status is "active" or "spectator"
-state = "WAITING"   # WAITING (no round yet), BETTING, PLAYING, RESULTS
-queue = []          # sockets still waiting for their turn in this phase
-current = None      # socket whose turn it is now
-deadline = 0        # time.time() when the current turn (or the results pause) runs out
+buffers = {}
+players = {}
+
+# state is WAITING, BETTING, PLAYING or RESULTS. One player acts at a time:
+# `current` is that player's socket, `queue` holds the ones still to come, and
+# `deadline` is when the current turn (or the results pause) ends.
+state = "WAITING"
+queue = []
+current = None
+deadline = 0
 deck = []
 dealer = []
-winners = []        # names of players who locked in a win (SPECTATE with >= GOAL)
+winners = []
+
+
+def lan_ip():
+    """The address other devices use to reach this PC. Connecting a UDP socket sends nothing;
+    it only makes the OS choose the network card it would use to reach the internet."""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("8.8.8.8", 80))
+        return probe.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        probe.close()
 
 
 def new_deck():
@@ -55,6 +76,7 @@ def hand_value(cards):
 
 
 def send(ss, line):
+    """Sends one protocol line. Never raises: a broken client is cleaned up by the main loop."""
     try:
         ss.sendall((line + "\n").encode())
     except OSError:
@@ -85,13 +107,13 @@ def broadcast(line, skip=None):
 
 
 def draw():
-    if len(deck) == 0:   # many players hitting a lot could empty one deck
+    if len(deck) == 0:
         deck.extend(new_deck())
     return deck.pop()
 
 
 def unique_name(wanted):
-    # letters, digits and _ only (spaces and commas would break the protocol), max 12, no duplicates
+    """Letters, digits and _ only, since spaces and commas separate protocol fields. Max 12, no duplicates."""
     name = "".join(ch for ch in wanted if ch.isalnum() or ch == "_")[:12] or "Player"
     taken = [players[ss]["name"] for ss in seated()]
     base, n = name, 2
@@ -106,6 +128,7 @@ def show(cards):
 
 
 def remove_client(ss):
+    """Forgets a disconnected client. If it was their turn, the turn passes on so the table never waits for them."""
     global current
     print("Client is gone")
     name = players[ss]["name"] if ss in players else None
@@ -124,8 +147,6 @@ def remove_client(ss):
             next_player()
 
 
-# ---------- betting phase: one player at a time ----------
-
 def start_round():
     global state
     if len(active()) == 0:
@@ -141,6 +162,7 @@ def start_round():
 
 
 def next_bettor():
+    """Gives the bet turn to the next active player. When everyone has had a turn, the cards are dealt."""
     global current, deadline
     while len(queue) > 0:
         ss = queue.pop(0)
@@ -157,8 +179,6 @@ def next_bettor():
         broadcast("MSG Nobody bet this round")
         start_round()
 
-
-# ---------- playing phase: one player at a time ----------
 
 def deal():
     global state, deck, dealer
@@ -180,6 +200,7 @@ def deal():
 
 
 def next_player():
+    """Gives the hit/stand turn to the next player. When nobody is left, the dealer plays."""
     global current, deadline
     while len(queue) > 0:
         ss = queue.pop(0)
@@ -202,6 +223,7 @@ def end_turn(ss, text):
 
 
 def finish_round():
+    """The dealer draws to 17, every bet is paid out, and broke players become spectators."""
     while hand_value(dealer) < 17:
         dealer.append(draw())
     dv = hand_value(dealer)
@@ -241,14 +263,14 @@ def finish_round():
 
 
 def pause_results():
-    # no sleep(): we only set a deadline; the select() timeout wakes us up when it passes
+    """Shows the results for a few seconds. No sleep(): only a deadline is set, and the select() timeout wakes the loop."""
     global state, deadline
     state = "RESULTS"
     deadline = time.time() + RESULT_PAUSE
 
 
 def broadcast_table():
-    # a snapshot of the whole table, so a GUI client can draw every seat
+    """Sends everyone a snapshot of the whole table (TABLE + one SEAT per player), which the GUI clients draw."""
     if current is not None and current in players:
         cur = players[current]["name"]
         total = TURN_TIME
@@ -267,9 +289,8 @@ def broadcast_table():
             send(ss, line)
 
 
-# ---------- end of the match ----------
-
 def game_over():
+    """Announces the winners (or the dealer), disconnects everyone and waits for a new match."""
     global state, current
     if len(winners) > 0:
         broadcast("GAME_OVER " + ",".join(winners))
@@ -288,6 +309,7 @@ def game_over():
 
 
 def turn_timeout():
+    """A player let their 20 seconds run out: no bet means sitting out the round, no move means standing."""
     global current
     ss = current
     if state == "BETTING":
@@ -301,6 +323,7 @@ def turn_timeout():
 
 
 def handle_line(ss, line):
+    """Handles one complete line from a client: NAME first, then BET, SPECTATE, HIT or STAND on their turn."""
     global deadline
     p = players[ss]
     parts = line.split(" ", 1)
@@ -364,6 +387,11 @@ def handle_line(ss, line):
 
 
 print("Blackjack server listening on port", PORT)
+print("  this PC:           127.0.0.1")
+print("  phone / other PCs:", lan_ip())
+
+# The whole server is this loop, in one thread. select() sleeps until a socket needs
+# attention (a new client, data, a disconnect) or until the current deadline passes.
 while ins:
     timeout = None
     if current is not None or state == "RESULTS":
